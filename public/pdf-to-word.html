@@ -1,0 +1,146 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PDF to Word · CP Scan</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#060a14">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+</head>
+<body>
+<div id="nav"></div>
+<main>
+<h1>PDF to Word</h1>
+<p class="hint">Fast mode reads the text inside the PDF with no AI. Accurate mode uses AI on each page, which keeps bold, tables and layout and also works on scanned PDFs.</p>
+<div class="card">
+  <label>PDF file</label>
+  <input type="file" id="file" accept="application/pdf">
+  <label>Mode</label>
+  <select id="mode">
+    <option value="fast">Fast (text PDFs, no AI)</option>
+    <option value="accurate">Accurate (AI, works for scanned PDFs)</option>
+  </select>
+  <label>Pages (for example 1-5,8). Empty means all.</label>
+  <input type="text" id="range">
+  <button class="primary" id="go" onclick="run()">Convert</button>
+</div>
+<div id="status"></div>
+<div class="pbar"><i id="pfill"></i></div>
+<div id="out" hidden></div>
+</main>
+<script src="/vendor/pdfjs/pdf.min.js"></script>
+<script src="common.js"></script>
+<script>
+nav();
+mountOutput();
+pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.js';
+
+function pickPages(text, total) {
+  var set = [];
+  if (!text.trim()) { for (var i = 1; i <= total; i++) set.push(i); return set; }
+  text.split(',').forEach(function (part) {
+    var m = part.trim().match(/^(\d+)(?:-(\d+))?$/);
+    if (!m) return;
+    var a = +m[1], b = m[2] ? +m[2] : a;
+    for (var k = a; k <= b && k <= total; k++) if (k >= 1 && set.indexOf(k) < 0) set.push(k);
+  });
+  return set;
+}
+
+async function pageLines(page) {
+  var tc = await page.getTextContent();
+  var items = tc.items.filter(function (it) { return it.str.trim(); }).map(function (it) {
+    return { s: it.str, x: it.transform[4], y: it.transform[5], h: Math.abs(it.transform[3]) || it.height, w: it.width };
+  });
+  items.sort(function (a, b) { return (b.y - a.y) || (a.x - b.x); });
+  var lines = [];
+  items.forEach(function (it) {
+    var ln = lines[lines.length - 1];
+    if (ln && Math.abs(ln.y - it.y) < ln.h * 0.5) ln.parts.push(it);
+    else lines.push({ y: it.y, parts: [it] });
+  });
+  lines.forEach(function (ln) {
+    ln.parts.sort(function (a, b) { return a.x - b.x; });
+    var s = '', prev = null;
+    ln.parts.forEach(function (p) {
+      if (prev && p.x - (prev.x + prev.w) > Math.max(prev.h, p.h) * 0.15) s += ' ';
+      s += p.s;
+      prev = p;
+    });
+    var last = ln.parts[ln.parts.length - 1];
+    ln.text = s.trim();
+    ln.x = ln.parts[0].x;
+    ln.right = last.x + last.w;
+    ln.h = Math.max.apply(null, ln.parts.map(function (p) { return p.h; }));
+  });
+  return lines;
+}
+
+function toMarkup(lines, med) {
+  var out = [], buf = '', prev = null;
+  var maxW = Math.max.apply(null, lines.map(function (l) { return l.right - l.x; }).concat([1]));
+  var bulletRe = /^([\u2022\u25AA\u00B7]\s*|[-\u2013]\s+)/;
+  function flush() { if (buf) { out.push(buf); buf = ''; } }
+  lines.forEach(function (l) {
+    var t = l.text;
+    if (l.h >= med * 1.5) { flush(); out.push('# ' + t); prev = null; return; }
+    if (l.h >= med * 1.2) { flush(); out.push('## ' + t); prev = null; return; }
+    if (bulletRe.test(t)) { flush(); buf = '- ' + t.replace(bulletRe, ''); prev = l; return; }
+    var gap = prev ? prev.y - l.y : 0;
+    if (buf && prev && gap <= l.h * 1.6 && (prev.right - prev.x) > maxW * 0.85) buf += ' ' + t;
+    else { flush(); buf = t; }
+    prev = l;
+  });
+  flush();
+  return out.join('\n');
+}
+
+async function run() {
+  var f = $('file').files[0];
+  if (!f) { status('Choose a PDF first.'); return; }
+  $('go').disabled = true;
+  try {
+    var pdf = await pdfjsLib.getDocument({ data: await f.arrayBuffer() }).promise;
+    var nums = pickPages($('range').value, pdf.numPages);
+    var list = [];
+    if ($('mode').value === 'fast') {
+      var all = [];
+      for (var i = 0; i < nums.length; i++) {
+        status('Reading page ' + nums[i] + '...');
+        all.push({ n: nums[i], lines: await pageLines(await pdf.getPage(nums[i])) });
+      }
+      var hs = [];
+      all.forEach(function (p) { p.lines.forEach(function (l) { hs.push(l.h); }); });
+      hs.sort(function (a, b) { return a - b; });
+      var med = hs.length ? hs[Math.floor(hs.length / 2)] : 10;
+      all.forEach(function (p) { list.push({ name: 'Page ' + p.n, text: toMarkup(p.lines, med) }); });
+      if (!hs.length) status('No text found. This looks like a scanned PDF. Use Accurate mode.');
+    } else {
+      var imgs = [];
+      for (var j = 0; j < nums.length; j++) {
+        status('Rendering page ' + nums[j] + '...');
+        var page = await pdf.getPage(nums[j]);
+        var v1 = page.getViewport({ scale: 1 });
+        var vp = page.getViewport({ scale: 1600 / Math.max(v1.width, v1.height) });
+        var c = document.createElement('canvas');
+        c.width = Math.round(vp.width);
+        c.height = Math.round(vp.height);
+        await page.render({ canvasContext: c.getContext('2d'), viewport: vp }).promise;
+        imgs.push(c.toDataURL('image/jpeg', 0.85));
+      }
+      var texts = await readImages(imgs, 'printed');
+      texts.forEach(function (t, k) { list.push({ name: 'Page ' + nums[k], text: t }); });
+    }
+    showPages(list);
+    if (list.some(function (p) { return p.text; })) status('Done. Check the text, then download.');
+  } catch (e) {
+    status('Error: ' + e.message);
+  }
+  $('go').disabled = false;
+}
+</script>
+</body>
+</html>

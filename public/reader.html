@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Photo to Document · CP Scan</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#060a14">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+</head>
+<body>
+<div id="nav"></div>
+<main>
+<h1>Photo to Document</h1>
+<p class="hint">Bold, spacing, lists, alignment and tables are rebuilt. Handwriting is read carefully, then typed up as a clean document.</p>
+<div class="card">
+  <label>Photos</label>
+  <input type="file" id="files" accept="image/*" multiple>
+  <label>Type of writing</label>
+  <select id="mode">
+    <option value="printed">Printed (copy exactly)</option>
+    <option value="handwritten">Handwritten (read carefully, then type up properly)</option>
+  </select>
+  <label>Document type (handwritten only)</label>
+  <select id="kind">
+    <option value="auto">Auto</option><option value="letter">Letter</option><option value="notes">Notes</option>
+    <option value="report">Report</option><option value="minutes">Meeting minutes</option>
+    <option value="essay">Essay</option><option value="cv">CV</option><option value="list">List or checklist</option>
+  </select>
+  <button class="primary" id="go" onclick="run()">Read photos</button>
+</div>
+<div id="status"></div>
+<div class="pbar"><i id="pfill"></i></div>
+<div id="out" hidden></div>
+</main>
+<script src="common.js"></script>
+<script>
+nav();
+mountOutput();
+async function run() {
+  var files = Array.from($('files').files).sort(byName);
+  if (!files.length) { status('Choose photos first.'); return; }
+  $('go').disabled = true;
+  var mode = $('mode').value, imgs = [];
+  for (var i = 0; i < files.length; i++) imgs.push(await fileToDataUrl(files[i], 1600, 0.85));
+  var texts = await readImages(imgs, mode);
+  var list = texts.map(function (t, i) { return { name: files[i].name, text: t }; });
+  if (mode === 'handwritten') list = await polishAll(list, $('kind').value);
+  showPages(list);
+  status('Done. Check the text, fix the order, then download.');
+  $('go').disabled = false;
+}
+</script>
+</body>
+</html>

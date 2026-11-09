@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Image to PDF · CP Scan</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#060a14">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+</head>
+<body>
+<div id="nav"></div>
+<main>
+<h1>Image to PDF</h1>
+<p class="hint">Combine images into one PDF.</p>
+<div class="card">
+  <label>Images</label>
+  <input type="file" id="files" accept="image/*" multiple>
+  <label>Clean-up</label>
+  <select id="mode" onchange="pager.mode = this.value; pager.refresh()">
+    <option value="original">Original</option><option value="document">Document (grey, sharper)</option><option value="bw">Black and white</option>
+  </select>
+  <label>Page size</label>
+  <select id="size"><option value="a4">A4 page, image centered</option><option value="fit">Page fits each image</option></select>
+  <label>File name</label>
+  <input type="text" id="name" value="images">
+</div>
+<div id="thumbs" class="grid"></div>
+<button class="primary" onclick="make()">Create PDF</button>
+<div id="status"></div>
+<div class="pbar"><i id="pfill"></i></div>
+</main>
+<script src="common.js"></script>
+<script>
+nav();
+var pager = Pager($('thumbs'));
+$('files').onchange = async function () {
+  var files = Array.from(this.files).sort(byName);
+  for (var i = 0; i < files.length; i++) {
+    status('Loading ' + (i + 1) + ' of ' + files.length + '...');
+    await pager.add(await fileToDataUrl(files[i], 2000, 0.9));
+  }
+  status('');
+};
+async function make() {
+  if (!pager.items.length) { status('Add images first.'); return; }
+  status('Building PDF...');
+  var r = await post('/api/images-to-pdf', { images: pager.items.map(function (i) { return i.out; }), size: $('size').value });
+  if (!r.ok) { status('Failed to build the PDF.'); return; }
+  saveBlob(await r.blob(), ($('name').value || 'images') + '.pdf');
+  status('Done.');
+}
+</script>
+</body>
+</html>

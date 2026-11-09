@@ -1,0 +1,57 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Write Document · CP Scan</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#060a14">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+</head>
+<body>
+<div id="nav"></div>
+<main>
+<h1>Write Document</h1>
+<p class="hint">Type rough notes or an instruction. You get a polished, typed document you can edit and download.</p>
+<div class="card">
+  <label>Your notes or instruction</label>
+  <textarea id="text" placeholder="For example: letter to my landlord about a broken water pump, I have asked twice already"></textarea>
+  <label>Document type</label>
+  <select id="kind">
+    <option value="auto">Auto</option><option value="letter">Letter</option><option value="notes">Notes</option>
+    <option value="report">Report</option><option value="minutes">Meeting minutes</option>
+    <option value="essay">Essay</option><option value="cv">CV</option><option value="list">List or checklist</option>
+  </select>
+  <label>Tone</label>
+  <select id="tone"><option>professional</option><option>formal</option><option>friendly</option><option>simple and clear</option></select>
+  <button class="primary" id="go" onclick="run()">Write it</button>
+</div>
+<div id="status"></div>
+<div class="pbar"><i id="pfill"></i></div>
+<div id="out" hidden></div>
+</main>
+<script src="common.js"></script>
+<script>
+nav();
+mountOutput();
+async function run() {
+  var text = $('text').value.trim();
+  if (!text) { status('Type something first.'); return; }
+  $('go').disabled = true;
+  status('Writing...');
+  try {
+    var r = await post('/api/compose', { text: text, kind: $('kind').value, tone: $('tone').value });
+    var d = await r.json();
+    if (!r.ok) throw new Error(d.error);
+    showPages([{ name: 'Document', text: d.text }]);
+    status('Done. Edit the text if needed, then download.');
+  } catch (e) {
+    status('Error: ' + e.message);
+  }
+  $('go').disabled = false;
+}
+</script>
+</body>
+</html>

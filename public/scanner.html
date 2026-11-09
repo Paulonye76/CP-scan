@@ -1,0 +1,97 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scanner · CP Scan</title>
+<link rel="stylesheet" href="style.css">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#060a14">
+<link rel="icon" href="icon.svg">
+<link rel="apple-touch-icon" href="icon-192.png">
+</head>
+<body>
+<div id="nav"></div>
+<main>
+<h1>Scanner</h1>
+<p class="hint">Scan pages with the camera, clean them up, then save as PDF or convert to an editable Word file.</p>
+<div class="card">
+  <video id="cam" playsinline muted hidden></video>
+  <button onclick="startCam()">Start camera</button>
+  <button class="primary" onclick="snap()">Capture page</button>
+  <button onclick="stopCam()">Stop camera</button>
+  <label>Or take or choose photos</label>
+  <input type="file" id="files" accept="image/*" capture="environment" multiple>
+  <label>Clean-up</label>
+  <select id="mode" onchange="pager.mode = this.value; pager.refresh()">
+    <option value="document">Document (grey, sharper)</option><option value="bw">Black and white</option><option value="original">Original</option>
+  </select>
+</div>
+<div id="thumbs" class="grid"></div>
+<div class="card">
+  <label>File name</label>
+  <input type="text" id="name" value="scan">
+  <button class="primary" onclick="toPdf()">Save as PDF</button>
+  <label>Convert to Word</label>
+  <select id="wmode"><option value="printed">Printed text</option><option value="handwritten">Handwritten</option></select>
+  <button class="primary" onclick="toWord()">Read pages</button>
+</div>
+<div id="status"></div>
+<div class="pbar"><i id="pfill"></i></div>
+<div id="out" hidden></div>
+</main>
+<script src="common.js"></script>
+<script>
+nav();
+mountOutput();
+var pager = Pager($('thumbs'));
+pager.mode = 'document';
+var stream = null;
+async function startCam() {
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    $('cam').srcObject = stream;
+    $('cam').hidden = false;
+    $('cam').play();
+  } catch (e) {
+    status('Camera not available here. Open this page at localhost on the same phone, or use the photo button below.');
+  }
+}
+function stopCam() {
+  if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
+  stream = null;
+  $('cam').hidden = true;
+}
+async function snap() {
+  var v = $('cam');
+  if (!stream || !v.videoWidth) { status('Start the camera first.'); return; }
+  var c = document.createElement('canvas');
+  c.width = v.videoWidth;
+  c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  await pager.add(c.toDataURL('image/jpeg', 0.92));
+}
+$('files').onchange = async function () {
+  var files = Array.from(this.files);
+  for (var i = 0; i < files.length; i++) await pager.add(await fileToDataUrl(files[i], 2000, 0.9));
+  this.value = '';
+};
+async function toPdf() {
+  if (!pager.items.length) { status('Capture pages first.'); return; }
+  status('Building PDF...');
+  var r = await post('/api/images-to-pdf', { images: pager.items.map(function (i) { return i.out; }), size: 'a4' });
+  if (!r.ok) { status('Failed to build the PDF.'); return; }
+  saveBlob(await r.blob(), ($('name').value || 'scan') + '.pdf');
+  status('Done.');
+}
+async function toWord() {
+  if (!pager.items.length) { status('Capture pages first.'); return; }
+  var texts = await readImages(pager.items.map(function (i) { return i.out; }), $('wmode').value);
+  var list = texts.map(function (t, i) { return { name: 'Page ' + (i + 1), text: t }; });
+  if ($('wmode').value === 'handwritten') list = await polishAll(list, 'auto');
+  showPages(list);
+  status('Done. Check the text, then download.');
+}
+</script>
+</body>
+</html>
