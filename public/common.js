@@ -2,7 +2,18 @@ var NAV = [
   ['index.html', 'Home'], ['reader.html', 'Photo to Document'], ['image-to-pdf.html', 'Image to PDF'],
   ['pdf-to-word.html', 'PDF to Word'], ['scanner.html', 'Scanner'], ['write.html', 'Write Document']
 ];
-var LOGO = '<svg viewBox="0 0 48 48" fill="none"><path d="M10 17v-5a2 2 0 0 1 2-2h5M31 10h5a2 2 0 0 1 2 2v5M38 31v5a2 2 0 0 1-2 2h-5M17 38h-5a2 2 0 0 1-2-2v-5" stroke="#0b1226" stroke-width="3" stroke-linecap="round"/><text x="24" y="29.5" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="800" font-size="15" fill="#0b1226">CP</text></svg>';
+var LOGO = '<svg viewBox="0 0 48 48" fill="none"><path d="M10 17v-5a2 2 0 0 1 2-2h5M31 10h5a2 2 0 0 1 2 2v5M38 31v5a2 2 0 0 1-2 2h-5M17 38h-5a2 2 0 0 1-2-2v-5" stroke="#ffffff" stroke-width="3" stroke-linecap="round"/><text x="24" y="29.5" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="800" font-size="15" fill="#ffffff">CP</text></svg>';
+var ICONS = {
+  scanner: '<path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3M4 12h16"/>',
+  photo: '<path d="M3 8h4l2-3h6l2 3h4v11H3z"/><circle cx="12" cy="13" r="3.5"/>',
+  pdf: '<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4"/><circle cx="10" cy="12" r="1.4"/><path d="M8 19l3-3 2 2 2-2 2 2"/>',
+  word: '<path d="M6 3h9l4 4v14H6z"/><path d="M15 3v4h4M9 12h7M9 16h7"/>',
+  write: '<path d="M4 20h4L19 9l-4-4L4 16z"/><path d="M13.5 6.5l4 4"/>'
+};
+var NAV = [
+  ['scanner.html', 'Scanner', 'scanner'], ['reader.html', 'Photo', 'photo'], ['image-to-pdf.html', 'To PDF', 'pdf'],
+  ['pdf-to-word.html', 'To Word', 'word'], ['write.html', 'Write', 'write']
+];
 var reviewPages = [];
 
 function $(id) { return document.getElementById(id); }
@@ -21,16 +32,13 @@ function byName(a, b) { return a.name.localeCompare(b.name, undefined, { numeric
 
 function nav() {
   var cur = location.pathname.split('/').pop() || 'index.html';
-  $('nav').innerHTML = '<div class="top"><a class="brand" href="index.html"><span class="logo">' + LOGO +
-    '</span><span><b>CP Scan</b><small>Scan. Convert. Done.</small></span></a></div><nav class="pills">' +
-    NAV.map(function (p) {
-      return '<a href="' + p[0] + '"' + (p[0] === cur ? ' class="on"' : '') + '>' + p[1] + '</a>';
-    }).join('') + '</nav>';
-  var on = document.querySelector('.pills a.on');
-  if (on && on.scrollIntoView) on.scrollIntoView({ inline: 'center', block: 'nearest' });
-  var f = document.createElement('footer');
-  f.textContent = 'CP Scan';
-  document.body.appendChild(f);
+  $('nav').innerHTML = '<div class="top"><a class="brand" href="index.html"><span class="logo">' + LOGO + '</span><b>CP Scan</b></a></div>';
+  var t = document.createElement('nav');
+  t.className = 'tabs';
+  t.innerHTML = NAV.map(function (p) {
+    return '<a href="' + p[0] + '"' + (p[0] === cur ? ' class="on"' : '') + '><svg viewBox="0 0 24 24">' + ICONS[p[2]] + '</svg><span>' + p[1] + '</span></a>';
+  }).join('');
+  document.body.appendChild(t);
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function () {});
 }
 
@@ -229,8 +237,7 @@ function mountOutput() {
   $('out').innerHTML = '<div id="pages"></div>' +
     '<div class="bar"><label>Title (optional)</label><input type="text" id="title">' +
     '<label class="inline"><input type="checkbox" id="newpage"> Start each part on a new page</label>' +
-    '<button class="primary" onclick="download(\'pdf\')">Download PDF</button>' +
-    '<button class="primary" onclick="download(\'docx\')">Download Word</button>' +
+    '<button class="primary block" onclick="previewDoc()">Preview and download</button>' +
     '<details><summary>Text format</summary><pre># heading\n## sub-heading\nParagraph with **bold** and *italic*\n- bullet\n  - sub bullet\n1. numbered\n&gt; italic line\n[center] centered\n[right] right aligned\n[gap]\n| a | b |\n|---|---|\n| 1 | 2 |</pre></details></div>';
 }
 
@@ -271,13 +278,104 @@ function renderPages() {
   });
 }
 
-async function download(kind) {
-  var title = $('title').value;
+var XICON = '<svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+var DLICON = '<svg viewBox="0 0 24 24"><path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M5 19.5h14"/></svg>';
+
+async function buildFile(kind) {
   var r = await post('/api/' + kind, {
-    title: title,
+    title: $('title').value,
     pages: reviewPages.map(function (p) { return p.text; }),
     pageBreaks: $('newpage').checked
   });
-  if (!r.ok) { status('Download failed.'); return; }
-  saveBlob(await r.blob(), (title || 'document') + (kind === 'pdf' ? '.pdf' : '.docx'));
+  if (!r.ok) throw new Error('Could not build the file.');
+  return r.blob();
+}
+
+function previewDoc() {
+  if (!reviewPages.length) return;
+  var name = $('title').value.trim() || 'document';
+  preview({ name: name, pdf: function () { return buildFile('pdf'); }, docx: function () { return buildFile('docx'); } });
+}
+
+function ensurePdfjs() {
+  return new Promise(function (ok, no) {
+    if (window.pdfjsLib) return ok();
+    var s = document.createElement('script');
+    s.src = '/vendor/pdfjs/pdf.min.js';
+    s.onload = function () { pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.js'; ok(); };
+    s.onerror = function () { no(new Error('Preview library did not load.')); };
+    document.head.appendChild(s);
+  });
+}
+
+function actionSheet(o, pdfBlob) {
+  var a = document.createElement('div');
+  a.className = 'actions';
+  a.innerHTML = '<div class="actions-box"><div class="actions-group"><div class="actions-title">Download as</div>' +
+    '<button data-k="pdf">PDF document</button><button data-k="docx">Word document</button></div>' +
+    '<div class="actions-group"><button data-k="x" class="cancel">Cancel</button></div></div>';
+  document.body.appendChild(a);
+  requestAnimationFrame(function () { a.classList.add('open'); });
+  a.onclick = async function (e) {
+    var k = e.target.getAttribute && e.target.getAttribute('data-k');
+    if (!k && e.target !== a) return;
+    if (k === 'pdf') saveBlob(pdfBlob, o.name + '.pdf');
+    if (k === 'docx') { try { saveBlob(await o.docx(), o.name + '.docx'); } catch (err) {} }
+    a.remove();
+  };
+}
+
+async function preview(o) {
+  var sheet = document.createElement('div');
+  sheet.className = 'sheet';
+  sheet.innerHTML = '<div class="sheet-head"><button class="x" aria-label="Close">' + XICON + '</button><div class="sheet-title"></div><span class="sp"></span></div>' +
+    '<div class="sheet-body"><div class="sheet-wait"><i class="spin"></i><span>Preparing preview...</span></div></div>' +
+    '<div class="sheet-foot"><button class="dl" disabled>' + DLICON + 'Download</button></div>';
+  sheet.querySelector('.sheet-title').textContent = o.name + '.pdf';
+  document.body.appendChild(sheet);
+  document.body.classList.add('locked');
+  requestAnimationFrame(function () { sheet.classList.add('open'); });
+  sheet.querySelector('.x').onclick = function () {
+    sheet.classList.remove('open');
+    document.body.classList.remove('locked');
+    setTimeout(function () { sheet.remove(); }, 350);
+  };
+  var body = sheet.querySelector('.sheet-body'), dl = sheet.querySelector('.dl');
+  try {
+    var blob = await o.pdf();
+    await ensurePdfjs();
+    var pdf = await pdfjsLib.getDocument({ data: await blob.arrayBuffer() }).promise;
+    body.innerHTML = '';
+    var w = Math.min(body.clientWidth, 860), dpr = window.devicePixelRatio || 1;
+    for (var i = 1; i <= pdf.numPages; i++) {
+      var page = await pdf.getPage(i);
+      var v1 = page.getViewport({ scale: 1 });
+      var vp = page.getViewport({ scale: (w / v1.width) * dpr });
+      var c = document.createElement('canvas');
+      c.width = Math.round(vp.width);
+      c.height = Math.round(vp.height);
+      c.style.width = w + 'px';
+      c.style.height = Math.round(vp.height / dpr) + 'px';
+      body.appendChild(c);
+      var ctx = c.getContext('2d');
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, c.width, c.height);
+      await page.render({ canvasContext: ctx, viewport: vp }).promise;
+    }
+    var n = document.createElement('div');
+    n.className = 'sheet-count';
+    n.textContent = pdf.numPages + (pdf.numPages === 1 ? ' page' : ' pages');
+    body.appendChild(n);
+    dl.disabled = false;
+    dl.onclick = function () {
+      if (!o.docx) saveBlob(blob, o.name + '.pdf');
+      else actionSheet(o, blob);
+    };
+  } catch (e) {
+    body.innerHTML = '';
+    var m = document.createElement('div');
+    m.className = 'sheet-wait';
+    m.textContent = 'Could not build the preview. ' + (e.message || '');
+    body.appendChild(m);
+  }
 }
