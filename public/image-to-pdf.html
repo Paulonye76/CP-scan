@@ -14,35 +14,39 @@
 <div id="nav"></div>
 <main>
 <h1>Image to PDF</h1>
-<p class="hint">Combine images into one PDF.</p>
+<p class="hint">Combine images into one PDF. Optionally crop, straighten and clean each page.</p>
 <div class="card">
   <label>Images</label>
   <input type="file" id="files" accept="image/*" multiple>
-  <label>Clean-up</label>
+  <label>Look</label>
   <select id="mode" onchange="pager.mode = this.value; pager.refresh()">
-    <option value="original">Original</option><option value="document">Document (grey, sharper)</option><option value="bw">Black and white</option>
+    <option value="original">Original</option><option value="magic">Color, cleaned</option><option value="gray">Grayscale</option><option value="bw">Black and white</option>
   </select>
+  <label class="inline"><input type="checkbox" id="auto" onchange="pager.auto = this.checked"> Auto-crop and straighten new pages</label>
   <label>Page size</label>
   <select id="size"><option value="a4">A4 page, image centered</option><option value="fit">Page fits each image</option></select>
   <label>File name</label>
   <input type="text" id="name" value="images">
 </div>
 <div id="thumbs" class="grid"></div>
-<button class="primary" onclick="make()">Preview PDF</button>
+<button class="primary block" onclick="make()">Preview PDF</button>
 <div id="status"></div>
 <div class="pbar"><i id="pfill"></i></div>
 </main>
 <script src="common.js"></script>
+<script src="scan.js"></script>
+<script src="editor.js"></script>
 <script>
 nav();
-var pager = Pager($('thumbs'));
+var pager = Pager($('thumbs'), { mode: 'original' });
 $('files').onchange = async function () {
   var files = Array.from(this.files).sort(byName);
   for (var i = 0; i < files.length; i++) {
     status('Loading ' + (i + 1) + ' of ' + files.length + '...');
-    await pager.add(await fileToDataUrl(files[i], 2000, 0.9));
+    await pager.add(await fileToDataUrl(files[i], 2400, 0.9));
   }
   status('');
+  this.value = '';
 };
 function make() {
   if (!pager.items.length) { status('Add images first.'); return; }

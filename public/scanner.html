@@ -14,70 +14,87 @@
 <div id="nav"></div>
 <main>
 <h1>Scanner</h1>
-<p class="hint">Scan pages with the camera, clean them up, then save as PDF or convert to an editable Word file.</p>
+<p class="hint">Use the camera or upload photos. Each page is cropped, straightened and cleaned to a white page, ready to print.</p>
 <div class="card">
-  <video id="cam" playsinline muted hidden></video>
-  <button onclick="startCam()">Start camera</button>
-  <button class="primary" onclick="snap()">Capture page</button>
-  <button onclick="stopCam()">Stop camera</button>
-  <label>Or take or choose photos</label>
-  <input type="file" id="files" accept="image/*" capture="environment" multiple>
-  <label>Clean-up</label>
-  <select id="mode" onchange="pager.mode = this.value; pager.refresh()">
-    <option value="document">Document (grey, sharper)</option><option value="bw">Black and white</option><option value="original">Original</option>
-  </select>
+  <div class="camwrap" id="camwrap" hidden><video id="cam" playsinline muted></video><div class="guide"></div></div>
+  <div class="row" id="camTools" hidden>
+    <button class="shutter" id="shot" onclick="snap()" aria-label="Capture page"></button>
+    <button onclick="stopCam()">Close camera</button>
+  </div>
+  <div class="row" id="start">
+    <button class="primary" onclick="startCam()">Use camera</button>
+    <button onclick="$('up').click()">Upload photos</button>
+  </div>
+  <input type="file" id="up" accept="image/*" multiple hidden>
+  <label>Look</label>
+  <select id="mode" onchange="pager.mode = this.value; pager.refresh()"><option value="magic">Color, cleaned</option><option value="gray">Grayscale</option><option value="bw">Black and white</option><option value="original">Original</option></select>
 </div>
 <div id="thumbs" class="grid"></div>
 <div class="card">
   <label>File name</label>
   <input type="text" id="name" value="scan">
-  <button class="primary" onclick="toPdf()">Preview PDF</button>
-  <label>Convert to Word</label>
+  <button class="primary block" onclick="toPdf()">Preview PDF</button>
+  <label>Or convert to an editable document</label>
   <select id="wmode"><option value="printed">Printed text</option><option value="handwritten">Handwritten</option></select>
-  <button class="primary" onclick="toWord()">Read pages</button>
+  <button class="block" style="margin-top:12px" onclick="toWord()">Read pages and edit</button>
 </div>
 <div id="status"></div>
 <div class="pbar"><i id="pfill"></i></div>
 <div id="out" hidden></div>
 </main>
 <script src="common.js"></script>
+<script src="scan.js"></script>
+<script src="editor.js"></script>
 <script>
 nav();
-mountOutput();
-var pager = Pager($('thumbs'));
-pager.mode = 'document';
-var stream = null;
+mountResult();
+var pager = Pager($('thumbs'), { mode: 'magic', auto: true });
+var stream = null, busy = false;
 async function startCam() {
   try {
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 2560 }, height: { ideal: 1440 } } });
     $('cam').srcObject = stream;
-    $('cam').hidden = false;
+    $('camwrap').hidden = false;
+    $('camTools').hidden = false;
+    $('start').hidden = true;
     $('cam').play();
   } catch (e) {
-    status('Camera not available here. Open this page at localhost on the same phone, or use the photo button below.');
+    status('Camera not available here. Use Upload photos, which can also open your camera.');
   }
 }
 function stopCam() {
   if (stream) stream.getTracks().forEach(function (t) { t.stop(); });
   stream = null;
-  $('cam').hidden = true;
+  $('camwrap').hidden = true;
+  $('camTools').hidden = true;
+  $('start').hidden = false;
 }
 async function snap() {
   var v = $('cam');
-  if (!stream || !v.videoWidth) { status('Start the camera first.'); return; }
+  if (busy || !stream || !v.videoWidth) return;
+  busy = true;
+  status('Scanning page...');
+  await tick();
   var c = document.createElement('canvas');
   c.width = v.videoWidth;
   c.height = v.videoHeight;
   c.getContext('2d').drawImage(v, 0, 0);
   await pager.add(c.toDataURL('image/jpeg', 0.92));
+  status('');
+  busy = false;
 }
-$('files').onchange = async function () {
+$('up').onchange = async function () {
   var files = Array.from(this.files);
-  for (var i = 0; i < files.length; i++) await pager.add(await fileToDataUrl(files[i], 2000, 0.9));
+  for (var i = 0; i < files.length; i++) {
+    status('Scanning page ' + (i + 1) + ' of ' + files.length + '...');
+    await tick();
+    await pager.add(await fileToDataUrl(files[i], 2800, 0.92));
+  }
+  status('');
   this.value = '';
 };
 function toPdf() {
-  if (!pager.items.length) { status('Capture pages first.'); return; }
+  if (!pager.items.length) { status('Scan pages first.'); return; }
   preview({
     name: $('name').value || 'scan',
     pdf: async function () {
@@ -88,12 +105,13 @@ function toPdf() {
   });
 }
 async function toWord() {
-  if (!pager.items.length) { status('Capture pages first.'); return; }
-  var texts = await readImages(pager.items.map(function (i) { return i.out; }), $('wmode').value);
-  var list = texts.map(function (t, i) { return { name: 'Page ' + (i + 1), text: t }; });
-  if ($('wmode').value === 'handwritten') list = await polishAll(list, 'auto');
-  showPages(list);
-  status('Done. Check the text, then download.');
+  if (!pager.items.length) { status('Scan pages first.'); return; }
+  var imgs = [];
+  for (var i = 0; i < pager.items.length; i++) imgs.push(await shrinkData(pager.items[i].out, 1600, 0.85));
+  var texts = await readImages(imgs, $('wmode').value);
+  if ($('wmode').value === 'handwritten') texts = await polishAll(texts, 'auto');
+  status('Done. Edit the document, then download.');
+  newDoc(texts.join('\n'), $('name').value || 'scan');
 }
 </script>
 </body>

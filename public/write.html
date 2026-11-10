@@ -26,16 +26,18 @@
   </select>
   <label>Tone</label>
   <select id="tone"><option>professional</option><option>formal</option><option>friendly</option><option>simple and clear</option></select>
-  <button class="primary" id="go" onclick="run()">Write it</button>
+  <button class="primary block" id="go" onclick="run()">Write it</button>
 </div>
 <div id="status"></div>
 <div class="pbar"><i id="pfill"></i></div>
 <div id="out" hidden></div>
 </main>
 <script src="common.js"></script>
+<script src="scan.js"></script>
+<script src="editor.js"></script>
 <script>
 nav();
-mountOutput();
+mountResult();
 async function run() {
   var text = $('text').value.trim();
   if (!text) { status('Type something first.'); return; }
@@ -45,8 +47,8 @@ async function run() {
     var r = await post('/api/compose', { text: text, kind: $('kind').value, tone: $('tone').value });
     var d = await r.json();
     if (!r.ok) throw new Error(d.error);
-    showPages([{ name: 'Document', text: d.text }]);
-    status('Done. Edit the text if needed, then download.');
+    status('Done. Edit the document, then download.');
+    newDoc(d.text, 'document');
   } catch (e) {
     status('Error: ' + e.message);
   }

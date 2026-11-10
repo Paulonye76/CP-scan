@@ -1,11 +1,12 @@
 function inline(s) {
   const out = [];
-  const re = /(\*\*[^*]+\*\*|\*[^*\s][^*]*\*)/g;
+  const re = /(\*\*\*[^*]+\*\*\*|\*\*[^*]+\*\*|\*[^*\s][^*]*\*)/g;
   let last = 0, m;
   while ((m = re.exec(s))) {
     if (m.index > last) out.push({ s: s.slice(last, m.index) });
     const tok = m[0];
-    if (tok.startsWith('**')) out.push({ s: tok.slice(2, -2), b: true });
+    if (tok.startsWith('***')) out.push({ s: tok.slice(3, -3), b: true, i: true });
+    else if (tok.startsWith('**')) out.push({ s: tok.slice(2, -2), b: true });
     else out.push({ s: tok.slice(1, -1), i: true });
     last = m.index + tok.length;
   }

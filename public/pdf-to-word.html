@@ -14,7 +14,7 @@
 <div id="nav"></div>
 <main>
 <h1>PDF to Word</h1>
-<p class="hint">Fast mode reads the text inside the PDF with no AI. Accurate mode uses AI on each page, which keeps bold, tables and layout and also works on scanned PDFs.</p>
+<p class="hint">Edit the result before you download. Fast mode reads the text inside the PDF with no AI. Accurate mode uses AI on each page, which keeps bold, tables and layout and also works on scanned PDFs.</p>
 <div class="card">
   <label>PDF file</label>
   <input type="file" id="file" accept="application/pdf">
@@ -33,9 +33,11 @@
 </main>
 <script src="/vendor/pdfjs/pdf.min.js"></script>
 <script src="common.js"></script>
+<script src="scan.js"></script>
+<script src="editor.js"></script>
 <script>
 nav();
-mountOutput();
+mountResult();
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdfjs/pdf.worker.min.js';
 
 function pickPages(text, total) {
@@ -134,8 +136,10 @@ async function run() {
       var texts = await readImages(imgs, 'printed');
       texts.forEach(function (t, k) { list.push({ name: 'Page ' + nums[k], text: t }); });
     }
-    showPages(list);
-    if (list.some(function (p) { return p.text; })) status('Done. Check the text, then download.');
+    if (list.some(function (q) { return q.text; })) {
+      status('Done. Edit the document, then download.');
+      newDoc(list.map(function (q) { return q.text; }).join('\n'), f.name.replace(/\.pdf$/i, ''));
+    }
   } catch (e) {
     status('Error: ' + e.message);
   }
