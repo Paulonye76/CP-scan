@@ -14,7 +14,7 @@
 <div id="nav"></div>
 <main>
 <h1>Scanner</h1>
-<p class="hint">Use the camera or upload photos. Each page is cropped, straightened and cleaned to a white page, ready to print.</p>
+<p class="hint">Use the camera or upload photos. Each page is cropped, straightened and cleaned to a pure white page with crisp black text, ready to print. Your text is never retyped, so every word stays exactly as printed.</p>
 <div class="card">
   <div class="camwrap" id="camwrap" hidden><video id="cam" playsinline muted></video><div class="guide"></div></div>
   <div class="row" id="camTools" hidden>
@@ -26,8 +26,9 @@
     <button onclick="$('up').click()">Upload photos</button>
   </div>
   <input type="file" id="up" accept="image/*" multiple hidden>
+  <label class="inline"><input type="checkbox" id="fix" checked onchange="pager.fix = this.checked; pager.refresh()"> Remove fingers, stains and specks</label>
   <label>Look</label>
-  <select id="mode" onchange="pager.mode = this.value; pager.refresh()"><option value="magic">Color, cleaned</option><option value="gray">Grayscale</option><option value="bw">Black and white</option><option value="original">Original</option></select>
+  <select id="mode" onchange="pager.mode = this.value; pager.refresh()"><option value="scan">Scan: white page, crisp black text</option><option value="magic">Color, cleaned</option><option value="gray">Grayscale</option><option value="bw">Black and white</option><option value="original">Original</option></select>
 </div>
 <div id="thumbs" class="grid"></div>
 <div class="card">
@@ -48,7 +49,7 @@
 <script>
 nav();
 mountResult();
-var pager = Pager($('thumbs'), { mode: 'magic', auto: true });
+var pager = Pager($('thumbs'), { mode: 'scan', auto: true, fix: true, maxSide: 3000 });
 var stream = null, busy = false;
 async function startCam() {
   try {
@@ -75,11 +76,18 @@ async function snap() {
   busy = true;
   status('Scanning page...');
   await tick();
-  var c = document.createElement('canvas');
-  c.width = v.videoWidth;
-  c.height = v.videoHeight;
-  c.getContext('2d').drawImage(v, 0, 0);
-  await pager.add(c.toDataURL('image/jpeg', 0.92));
+  var src = null;
+  if ('ImageCapture' in window) {
+    try { src = await fileToDataUrl(await new ImageCapture(stream.getVideoTracks()[0]).takePhoto(), 3600, 0.93); } catch (e) { src = null; }
+  }
+  if (!src) {
+    var c = document.createElement('canvas');
+    c.width = v.videoWidth;
+    c.height = v.videoHeight;
+    c.getContext('2d').drawImage(v, 0, 0);
+    src = c.toDataURL('image/jpeg', 0.93);
+  }
+  await pager.add(src);
   status('');
   busy = false;
 }
@@ -88,7 +96,7 @@ $('up').onchange = async function () {
   for (var i = 0; i < files.length; i++) {
     status('Scanning page ' + (i + 1) + ' of ' + files.length + '...');
     await tick();
-    await pager.add(await fileToDataUrl(files[i], 2800, 0.92));
+    await pager.add(await fileToDataUrl(files[i], 3600, 0.93));
   }
   status('');
   this.value = '';
