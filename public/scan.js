@@ -121,6 +121,60 @@ function quadArea(q) {
 }
 
 function detectQuad(img) {
+  var mults = [1, 0.85, 0.7, 0.55], i, r;
+  for (i = 0; i < mults.length; i++) {
+    r = detectQuadAt(img, mults[i]);
+    if (r) return refineQuad(img, r.q);
+  }
+  return null;
+}
+
+function lineHit(p1, d1, p2, d2) {
+  var den = d1[0] * d2[1] - d1[1] * d2[0];
+  if (Math.abs(den) < 1e-6) return null;
+  var t = ((p2[0] - p1[0]) * d2[1] - (p2[1] - p1[1]) * d2[0]) / den;
+  return [p1[0] + d1[0] * t, p1[1] + d1[1] * t];
+}
+
+function refineQuad(img, q) {
+  var s = Math.min(1, 640 / Math.max(img.width, img.height));
+  var w = Math.max(16, Math.round(img.width * s)), h = Math.max(16, Math.round(img.height * s));
+  var d = canvasOf(img, w, h).getContext('2d').getImageData(0, 0, w, h).data, n = w * h, g = new Float32Array(n), i;
+  for (i = 0; i < n; i++) g[i] = 0.299 * d[4 * i] + 0.587 * d[4 * i + 1] + 0.114 * d[4 * i + 2];
+  g = boxBlur(g, w, h, 2);
+  function at(x, y) { x = Math.min(w - 1, Math.max(0, Math.round(x))); y = Math.min(h - 1, Math.max(0, Math.round(y))); return g[y * w + x]; }
+  var P = q.map(function (p) { return [p[0] * w, p[1] * h]; });
+  var cx = (P[0][0] + P[1][0] + P[2][0] + P[3][0]) / 4, cy = (P[0][1] + P[1][1] + P[2][1] + P[3][1]) / 4;
+  var big = Math.max(w, h), lines = [], e, t, o;
+  for (e = 0; e < 4; e++) {
+    var A = P[e], B = P[(e + 1) % 4], dx = B[0] - A[0], dy = B[1] - A[1], L = Math.hypot(dx, dy) || 1;
+    var nx = -dy / L, ny = dx / L, mx = (A[0] + B[0]) / 2, my = (A[1] + B[1]) / 2;
+    if ((mx - cx) * nx + (my - cy) * ny < 0) { nx = -nx; ny = -ny; }
+    var offs = [];
+    for (t = 0.1; t <= 0.9; t += 0.05) {
+      var px = A[0] + dx * t, py = A[1] + dy * t, gr = [], mxg = 0, lo = Math.round(-0.012 * big), hi = Math.round(0.07 * big);
+      for (o = lo; o <= hi; o++) {
+        var v = at(px + nx * (o - 2), py + ny * (o - 2)) - at(px + nx * (o + 2), py + ny * (o + 2));
+        gr.push(v);
+        if (v > mxg) mxg = v;
+      }
+      if (mxg < 25) continue;
+      for (o = 0; o < gr.length; o++) if (gr[o] >= mxg * 0.6) { offs.push(o + lo); break; }
+    }
+    var off = 0;
+    if (offs.length >= 5) { offs.sort(function (a, b) { return a - b; }); off = offs[offs.length >> 1]; }
+    lines.push({ p: [A[0] + nx * off, A[1] + ny * off], d: [dx / L, dy / L] });
+  }
+  var out = [], k, c;
+  for (k = 0; k < 4; k++) {
+    c = lineHit(lines[(k + 3) % 4].p, lines[(k + 3) % 4].d, lines[k].p, lines[k].d);
+    if (!c || Math.abs(c[0] - P[k][0]) > 0.15 * w || Math.abs(c[1] - P[k][1]) > 0.15 * h) return q;
+    out.push([Math.min(1, Math.max(0, c[0] / w)), Math.min(1, Math.max(0, c[1] / h))]);
+  }
+  return out;
+}
+
+function detectQuadAt(img, mult) {
   var s = Math.min(1, 320 / Math.max(img.width, img.height));
   var w = Math.max(16, Math.round(img.width * s)), h = Math.max(16, Math.round(img.height * s));
   var d = canvasOf(img, w, h).getContext('2d').getImageData(0, 0, w, h).data;
@@ -140,7 +194,9 @@ function detectQuad(img) {
     var mB = sumB / wB, mF = (sum - sumB) / wF, v = wB * wF * (mB - mF) * (mB - mF);
     if (v > best) { best = v; thr = t; }
   }
+  thr = thr * mult;
   for (var pol = 1; pol >= 0; pol--) {
+    if (pol === 0 && mult !== 1) continue;
     var mask = new Uint8Array(n);
     for (i = 0; i < n; i++) mask[i] = (g[i] > thr ? 1 : 0) === pol ? 1 : 0;
     var comp = largest(mask, w, h);
@@ -166,10 +222,13 @@ function detectQuad(img) {
     var tl = 0;
     for (i = 1; i < 4; i++) if (q[i][0] + q[i][1] < q[tl][0] + q[tl][1]) tl = i;
     q = [q[tl], q[(tl + 1) % 4], q[(tl + 2) % 4], q[(tl + 3) % 4]];
-    return q.map(function (p) {
-      var px = p[0] + (cx - p[0]) * 0.012, py = p[1] + (cy - p[1]) * 0.012;
-      return [Math.min(1, Math.max(0, px / w)), Math.min(1, Math.max(0, py / h))];
-    });
+    return {
+      area: quadArea(q) / n,
+      q: q.map(function (p) {
+        var px = p[0] + (cx - p[0]) * 0.012, py = p[1] + (cy - p[1]) * 0.012;
+        return [Math.min(1, Math.max(0, px / w)), Math.min(1, Math.max(0, py / h))];
+      })
+    };
   }
   return null;
 }
@@ -208,7 +267,7 @@ function warp(img, q, maxSide) {
   var r = ht / wd, A4 = 1.4142;
   if (Math.abs(r - A4) < 0.09) ht = wd * A4;
   else if (Math.abs(1 / r - A4) < 0.09) wd = ht * A4;
-  var s = Math.min(1, (maxSide || 2339) / Math.max(wd, ht));
+  var s = Math.min(2, (maxSide || 2339) / Math.max(wd, ht));
   wd = Math.max(2, Math.round(wd * s));
   ht = Math.max(2, Math.round(ht * s));
   var H = homography([[0, 0], [wd, 0], [wd, ht], [0, ht]], P);
@@ -292,14 +351,27 @@ function skinMask(d, w, h) {
 
 function despeckle(c, maxA, faint) {
   var W = c.width, H = c.height, ctx = c.getContext('2d'), im = ctx.getImageData(0, 0, W, H), d = im.data, n = W * H;
-  var dark = new Uint8Array(n), seen = new Uint8Array(n), q = new Int32Array(n), i, j, k, x, y, head, tail, dx, dy, nx, ny, nk, mn, changed = false;
+  var dark = new Uint8Array(n), seen = new Uint8Array(n), q = new Int32Array(n), i, j, k, x, y, head, tail, dx, dy, nx, ny, nk, mn, x0, x1, y0, y1, touch, changed = false;
   for (i = 0; i < n; i++) dark[i] = d[4 * i + 1] < 150 ? 1 : 0;
+  var G = 4, gw = Math.ceil(W / G), gh = Math.ceil(H / G), integ = new Uint32Array((gw + 1) * (gh + 1)), cnt = new Uint16Array(gw * gh);
+  for (y = 0; y < H; y++) for (x = 0; x < W; x++) if (dark[y * W + x]) cnt[((y / G) | 0) * gw + ((x / G) | 0)]++;
+  for (y = 0; y < gh; y++) {
+    var rs = 0;
+    for (x = 0; x < gw; x++) { rs += cnt[y * gw + x]; integ[(y + 1) * (gw + 1) + x + 1] = integ[y * (gw + 1) + x + 1] + rs; }
+  }
+  function around(cx, cy) {
+    var gx = (cx / G) | 0, gy = (cy / G) | 0, r = 4;
+    var ax = Math.max(0, gx - r), bx = Math.min(gw - 1, gx + r), ay = Math.max(0, gy - r), by = Math.min(gh - 1, gy + r);
+    return integ[(by + 1) * (gw + 1) + bx + 1] - integ[ay * (gw + 1) + bx + 1] - integ[(by + 1) * (gw + 1) + ax] + integ[ay * (gw + 1) + ax];
+  }
   for (i = 0; i < n; i++) {
     if (!dark[i] || seen[i]) continue;
-    head = 0; tail = 0; q[tail++] = i; seen[i] = 1; mn = 255;
+    head = 0; tail = 0; q[tail++] = i; seen[i] = 1; mn = 255; x0 = W; x1 = 0; y0 = H; y1 = 0; touch = false;
     while (head < tail) {
       k = q[head++]; x = k % W; y = (k / W) | 0;
+      if (x === 0 || y === 0 || x === W - 1 || y === H - 1) touch = true;
       if (d[4 * k + 1] < mn) mn = d[4 * k + 1];
+      if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
       for (dy = -1; dy <= 1; dy++) for (dx = -1; dx <= 1; dx++) {
         nx = x + dx; ny = y + dy;
         if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
@@ -307,7 +379,10 @@ function despeckle(c, maxA, faint) {
         if (dark[nk] && !seen[nk]) { seen[nk] = 1; q[tail++] = nk; }
       }
     }
-    if (tail <= maxA || (faint && tail <= faint && mn > 90)) {
+    var kill = tail <= 2 || (touch && tail > n * 0.0005);
+    if (!kill && tail <= maxA) kill = around((x0 + x1) / 2, (y0 + y1) / 2) - tail < 14;
+    if (!kill && faint && tail >= 40 && tail <= faint && mn > 110 && tail > 0.5 * (x1 - x0 + 1) * (y1 - y0 + 1)) kill = true;
+    if (kill) {
       for (j = 0; j < tail; j++) { k = q[j]; d[4 * k] = d[4 * k + 1] = d[4 * k + 2] = 255; }
       changed = true;
     }
@@ -315,31 +390,66 @@ function despeckle(c, maxA, faint) {
   if (changed) ctx.putImageData(im, 0, 0);
 }
 
-function autoDeskew(c) {
-  var sc0 = Math.min(1, 700 / Math.max(c.width, c.height));
+function flattenLines(c) {
+  var sc0 = Math.min(1, 900 / Math.max(c.width, c.height));
   var w = Math.max(8, Math.round(c.width * sc0)), h = Math.max(8, Math.round(c.height * sc0));
-  var d = canvasOf(c, w, h).getContext('2d').getImageData(0, 0, w, h).data, xs = [], ys = [], i;
-  for (i = 0; i < w * h; i++) if (d[4 * i + 1] < 140) { xs.push(i % w); ys.push((i / w) | 0); }
-  if (xs.length < 200) return c;
-  function score(a) {
-    var cs = Math.cos(a), sn = Math.sin(a), bins = new Float32Array(h + 2 * w + 4), j, sum = 0;
-    for (j = 0; j < xs.length; j++) bins[Math.round(ys[j] * cs - xs[j] * sn) + w]++;
-    for (j = 0; j < bins.length; j++) sum += bins[j] * bins[j];
-    return sum;
+  var d = canvasOf(c, w, h).getContext('2d').getImageData(0, 0, w, h).data;
+  var B = 8, bh = h / B, bands = [], i, b, y;
+  for (b = 0; b < B; b++) bands.push({ xs: [], ys: [] });
+  for (i = 0; i < w * h; i++) {
+    if (d[4 * i + 1] < 140) {
+      y = (i / w) | 0; b = Math.min(B - 1, (y / bh) | 0);
+      bands[b].xs.push(i % w); bands[b].ys.push(y - b * bh);
+    }
   }
-  var best = 0, bs = -1, a, v;
-  for (a = -4; a <= 4; a += 0.5) { v = score(a * Math.PI / 180); if (v > bs) { bs = v; best = a; } }
-  var fine = best;
-  for (a = best - 0.5; a <= best + 0.5; a += 0.1) { v = score(a * Math.PI / 180); if (v > bs) { bs = v; fine = a; } }
-  if (Math.abs(fine) < 0.25) return c;
+  function bestAngle(xs, ys) {
+    if (xs.length < 300) return null;
+    function score(a) {
+      var cs = Math.cos(a), sn = Math.sin(a), bins = new Float32Array(Math.ceil(bh) + 2 * w + 4), j, sum = 0;
+      for (j = 0; j < xs.length; j++) bins[Math.round(ys[j] * cs - xs[j] * sn) + w]++;
+      for (j = 0; j < bins.length; j++) sum += bins[j] * bins[j];
+      return sum;
+    }
+    var best = 0, bs = -1, a, v;
+    for (a = -7; a <= 7; a += 0.5) { v = score(a * Math.PI / 180); if (v > bs) { bs = v; best = a; } }
+    var fine = best;
+    for (a = best - 0.5; a <= best + 0.5; a += 0.1) { v = score(a * Math.PI / 180); if (v > bs) { bs = v; fine = a; } }
+    return fine;
+  }
+  var ang = bands.map(function (q) { return bestAngle(q.xs, q.ys); }), j, k;
+  if (ang.every(function (a) { return a === null; })) return c;
+  for (i = 0; i < B; i++) {
+    if (ang[i] !== null) continue;
+    for (k = 1; k < B && ang[i] === null; k++) {
+      if (i - k >= 0 && ang[i - k] !== null) ang[i] = ang[i - k];
+      else if (i + k < B && ang[i + k] !== null) ang[i] = ang[i + k];
+    }
+  }
+  var sm = ang.map(function (a, n) {
+    var l = ang[Math.max(0, n - 1)], r = ang[Math.min(B - 1, n + 1)];
+    return 0.25 * l + 0.5 * a + 0.25 * r;
+  });
+  if (Math.max.apply(null, sm.map(Math.abs)) < 0.25) return c;
+  var W = c.width, H = c.height, src = c.getContext('2d').getImageData(0, 0, W, H).data;
   var o = document.createElement('canvas');
-  o.width = c.width; o.height = c.height;
-  var x = o.getContext('2d');
-  x.fillStyle = '#ffffff';
-  x.fillRect(0, 0, o.width, o.height);
-  x.translate(o.width / 2, o.height / 2);
-  x.rotate(-fine * Math.PI / 180);
-  x.drawImage(c, -c.width / 2, -c.height / 2);
+  o.width = W; o.height = H;
+  var ox = o.getContext('2d'), od = ox.createImageData(W, H), dst = od.data, x, ys, fy, y0, p0, p1, ch, kk, tn, f, bi, cx = W / 2;
+  for (y = 0; y < H; y++) {
+    f = (y * sc0) / bh - 0.5;
+    bi = Math.min(B - 2, Math.max(0, Math.floor(f)));
+    var u = Math.min(1, Math.max(0, f - bi));
+    tn = Math.tan(((1 - u) * sm[bi] + u * sm[bi + 1]) * Math.PI / 180);
+    for (x = 0; x < W; x++) {
+      kk = 4 * (y * W + x);
+      ys = y + (x - cx) * tn;
+      if (ys < 0 || ys > H - 1.001) { dst[kk] = dst[kk + 1] = dst[kk + 2] = dst[kk + 3] = 255; continue; }
+      y0 = Math.floor(ys); fy = ys - y0;
+      p0 = 4 * (y0 * W + x); p1 = p0 + 4 * W;
+      for (ch = 0; ch < 3; ch++) dst[kk + ch] = src[p0 + ch] * (1 - fy) + src[p1 + ch] * fy;
+      dst[kk + 3] = 255;
+    }
+  }
+  ox.putImageData(od, 0, 0);
   return o;
 }
 
@@ -360,29 +470,54 @@ function cleanCanvas(c, mode, fix) {
   smx.putImageData(sd, 0, 0);
   var bg = canvasOf(sm, W, H).getContext('2d').getImageData(0, 0, W, H).data;
   var im = ctx.getImageData(0, 0, W, H), d = im.data, k, a, b, e, l, x, y, sy;
-  var scan = mode === 'scan', lo = scan ? 75 : 40, span = scan ? 120 : 192;
+  var scan = mode === 'scan', lo = 40, span = 192, Ls = scan ? new Float32Array(W * H) : null;
   var lut = new Uint8ClampedArray(256);
-  for (i = 0; i < 256; i++) lut[i] = scan ? 255 * Math.pow(i / 255, 1.3) : i;
+  for (i = 0; i < 256; i++) lut[i] = 255 * Math.pow(i / 255, 1.25);
   for (y = 0; y < H; y++) {
     sy = Math.min(sh - 1, (y * sh / H) | 0) * sw;
     for (x = 0; x < W; x++) {
       k = 4 * (y * W + x);
-      if (skin && skin[sy + Math.min(sw - 1, (x * sw / W) | 0)]) { d[k] = d[k + 1] = d[k + 2] = 255; continue; }
+      if (skin && skin[sy + Math.min(sw - 1, (x * sw / W) | 0)]) { d[k] = d[k + 1] = d[k + 2] = 255; if (scan) Ls[y * W + x] = 255; continue; }
       a = (d[k] * 255 / Math.max(bg[k], 30) - lo) * 255 / span;
       b = (d[k + 1] * 255 / Math.max(bg[k + 1], 30) - lo) * 255 / span;
       e = (d[k + 2] * 255 / Math.max(bg[k + 2], 30) - lo) * 255 / span;
       if (mode === 'magic') { d[k] = a; d[k + 1] = b; d[k + 2] = e; }
       else {
         l = 0.299 * a + 0.587 * b + 0.114 * e;
+        if (scan) { Ls[y * W + x] = l; continue; }
         if (mode === 'bw') l = (l - 120) * 255 / 65;
-        else if (scan) l = lut[l < 0 ? 0 : l > 255 ? 255 : l | 0];
         d[k] = d[k + 1] = d[k + 2] = l;
       }
     }
   }
+  if (scan) {
+    var Bl = boxBlur(Ls, W, H, Math.max(2, Math.round(W / 700))), v, t2, ie, K = 4, kw = Math.ceil(W / K), kh = Math.ceil(H / K);
+    var ix, p;
+    var inv = new Uint8ClampedArray(kw * kh);
+    for (y = 0; y < H; y++) for (x = 0; x < W; x++) {
+      p = ((y / K) | 0) * kw + ((x / K) | 0);
+      v = Ls[y * W + x];
+      v = 255 - (v < 0 ? 0 : v > 255 ? 255 : v);
+      if (v > inv[p]) inv[p] = v;
+    }
+    var mx = maxFilter(inv, kw, kh, 12), ink = new Float32Array(kw * kh);
+    for (i = 0; i < kw * kh; i++) ink[i] = 255 - mx[i];
+    ink = boxBlur(ink, kw, kh, 10);
+    for (y = 0; y < H; y++) {
+      for (x = 0; x < W; x++) {
+        i = y * W + x;
+        ix = ink[Math.min(kh - 1, (y / K) | 0) * kw + Math.min(kw - 1, (x / K) | 0)];
+        ie = ix <= 140 ? ix : ix >= 195 ? 0 : ix * (195 - ix) / 55;
+        v = Ls[i] + 1.5 * (Ls[i] - Bl[i]);
+        v = (v - ie) * 255 / (255 - ie);
+        t2 = (v - 15) * 255 / 200;
+        d[4 * i] = d[4 * i + 1] = d[4 * i + 2] = lut[t2 < 0 ? 0 : t2 > 255 ? 255 : t2 | 0];
+      }
+    }
+  }
   ctx.putImageData(im, 0, 0);
-  if (mode !== 'bw') sharpen(c, scan ? 0.8 : 0.5);
-  despeckle(c, Math.min(30, Math.max(3, Math.round(W * H / 250000))), fix && (scan || mode === 'gray') ? 2500 : 0);
+  if (mode !== 'bw' && !scan) sharpen(c, 0.5);
+  despeckle(c, Math.min(40, Math.max(3, Math.round(W * H / 200000))), fix && (scan || mode === 'gray') ? 2500 : 0);
 }
 
 function Pager(box, opts) {
@@ -394,7 +529,7 @@ function Pager(box, opts) {
     var c = it.quad ? warp(img, it.quad, opts.maxSide || 3000) : canvasOf(img);
     c = rotateCanvas(c, it.rot);
     cleanCanvas(c, self.mode, self.fix);
-    if (self.mode !== 'original') c = autoDeskew(c);
+    if (self.mode !== 'original') c = flattenLines(c);
     it.out = c.toDataURL('image/jpeg', 0.92);
   }
 
